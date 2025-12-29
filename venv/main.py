@@ -1,44 +1,34 @@
 import os
 import speech_recognition as sr
 import pyttsx3
-import google.generativeai as genai
+from google import genai # Nova biblioteca oficial
 from dotenv import load_dotenv
 
 # --- CONFIGURAÇÃO INICIAL ---
 load_dotenv()
-
 api_key = os.getenv("GEMINI_API_KEY")
+
 if not api_key:
-    print("ERRO: Chave de API não encontrada! Verifique o arquivo .env")
+    print("ERRO: Chave não encontrada no .env")
     exit()
 
-genai.configure(api_key=api_key)
-
-# Trocamos para um modelo que costuma ser mais estável na conexão
-# Se der erro 404 novamente, troque "gemini-1.5-flash" por "gemini-pro"
-MODELO_ESCOLHIDO = "gemini-pro" 
-
+# Configuração do Cliente da Nova API
 try:
-    model = genai.GenerativeModel(
-        model_name=MODELO_ESCOLHIDO,
-        system_instruction="""
-        Você é o J.A.R.V.I.S. Responda em Português do Brasil.
-        Seja conciso (máximo 2 frases), técnico e levemente sarcástico.
-        Não use markdown (*negrito*), fale como uma pessoa normal.
-        """
-    )
-    # Teste rápido de conexão silencioso
-    print("Conectando ao cérebro...")
+    client = genai.Client(api_key=api_key)
+    print("Conectado ao Sistema Gemini (Nova API).")
 except Exception as e:
-    print(f"Erro ao configurar modelo: {e}")
-
-chat = model.start_chat(history=[])
+    print(f"Erro de conexão: {e}")
+    exit()
 
 # Configuração de Voz
 engine = pyttsx3.init()
 voices = engine.getProperty('voices')
-engine.setProperty('voice', voices[0].id) 
-engine.setProperty('rate', 190)
+# Tenta selecionar voz em PT-BR (índice 0 ou 1)
+try:
+    engine.setProperty('voice', voices[0].id) 
+except:
+    pass
+engine.setProperty('rate', 190) # Velocidade da fala
 
 def falar(texto):
     print(f"JARVIS: {texto}")
@@ -48,50 +38,56 @@ def falar(texto):
 def ouvir_microfone():
     recognizer = sr.Recognizer()
     with sr.Microphone() as source:
-        # Ajuste de sensibilidade (importante!)
+        # 1. Ajuste de ruído mais curto para ser mais ágil
         recognizer.adjust_for_ambient_noise(source, duration=0.5)
         
-        # --- O SEGREDO PARA NÃO CORTAR ---
-        recognizer.pause_threshold = 1.5  # Espera 1.5s de silêncio antes de finalizar
-        recognizer.energy_threshold = 300 # Sensibilidade mínima para captar voz
+        # --- CONFIGURAÇÃO ANTI-CORTES ---
+        # pause_threshold: Tempo de silêncio necessário para ele achar que você acabou.
+        # Aumentei para 2.0 segundos (antes era 0.8). Dá tempo de respirar.
+        recognizer.pause_threshold = 2.0 
+        
+        # phrase_time_limit: Tirei o limite. Ele vai te ouvir até você ficar quieto por 2s.
         
         print("\n(Ouvindo...)")
         try:
-            # Aumentei o timeout para você ter tempo de pensar
-            audio = recognizer.listen(source, timeout=7, phrase_time_limit=15)
-            print("(Processando áudio...)")
+            # timeout=None significa que ele vai esperar para sempre você começar a falar
+            audio = recognizer.listen(source, timeout=None)
+            print("(Processando...)")
             
             texto = recognizer.recognize_google(audio, language='pt-BR')
             print(f"VOCÊ: {texto}")
             return texto
-            
-        except sr.WaitTimeoutError:
-            return None
         except sr.UnknownValueError:
-            return None # Não entendeu nada (silêncio ou ruído)
+            return None
         except Exception as e:
-            print(f"Erro mic: {e}")
+            # Ignora erros de timeout silenciosos
             return None
 
 def main():
-    falar("Olá Gilbert, Sistemas rekalibrados. Microfone ajustado. Estou pronto.")
+    falar("Módulo de comunicação atualizado. Estou ouvindo.")
     
     while True:
         comando = ouvir_microfone()
         
         if comando:
-            if "desligar" in comando.lower() or "encerrar" in comando.lower():
-                falar("Encerrando protocolos.")
+            if "desligar" in comando.lower() or "tchau" in comando.lower():
+                falar("Sistemas offline.")
                 break
             
             try:
-                # Envia para o Gemini
-                response = chat.send_message(comando)
+                # NOVA SINTAXE DE GERAÇÃO (Google GenAI SDK)
+                # Usando o modelo 1.5 Flash que é rápido e estável na nova lib
+                response = client.models.generate_content(
+                    model="gemini-1.5-flash", 
+                    contents=comando,
+                    config={
+                        "system_instruction": "Você é o JARVIS. Responda em Português, de forma curta (máximo 2 frases), técnica e prestativa."
+                    }
+                )
                 falar(response.text)
             except Exception as e:
-                # Se der o erro 404 aqui, vai aparecer no terminal
-                falar("Senhor, erro de conexão com o modelo de linguagem.")
-                print(f"ERRO API DETALHADO: {e}")
+                falar("Senhor, ocorreu um erro na matriz.")
+                print(f"ERRO API: {e}")
 
 if __name__ == "__main__":
     main()
