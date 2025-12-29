@@ -1,56 +1,86 @@
 import os
+import requests # Biblioteca para requisições HTTP diretas
 import speech_recognition as sr
 import pyttsx3
-from google import genai # Nova biblioteca oficial
+import json
 from dotenv import load_dotenv
 
-# --- CONFIGURAÇÃO INICIAL ---
+# --- CONFIGURAÇÃO ---
 load_dotenv()
-api_key = os.getenv("GEMINI_API_KEY")
+API_KEY = os.getenv("GEMINI_API_KEY")
 
-if not api_key:
+if not API_KEY:
     print("ERRO: Chave não encontrada no .env")
     exit()
 
-# Configuração do Cliente da Nova API
-try:
-    client = genai.Client(api_key=api_key)
-    print("Conectado ao Sistema Gemini (Nova API).")
-except Exception as e:
-    print(f"Erro de conexão: {e}")
-    exit()
+# URL direta da API REST do Google (Bypassing SDK issues)
+# Usando o modelo gemini-1.5-flash que é rápido e barato
+URL_API = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY}"
 
 # Configuração de Voz
 engine = pyttsx3.init()
-voices = engine.getProperty('voices')
-# Tenta selecionar voz em PT-BR (índice 0 ou 1)
 try:
+    voices = engine.getProperty('voices')
     engine.setProperty('voice', voices[0].id) 
 except:
     pass
-engine.setProperty('rate', 190) # Velocidade da fala
+engine.setProperty('rate', 190)
 
 def falar(texto):
     print(f"JARVIS: {texto}")
     engine.say(texto)
     engine.runAndWait()
 
+def enviar_para_gemini_http(texto_usuario):
+    """
+    Envia o texto via HTTP POST direto, sem usar a biblioteca do Google.
+    Isso evita erros de versão de SDK.
+    """
+    headers = {"Content-Type": "application/json"}
+    
+    # Estrutura exata que a API REST espera
+    payload = {
+        "contents": [{
+            "parts": [{"text": texto_usuario}]
+        }],
+        "systemInstruction": {
+            "parts": [{"text": "Você é o JARVIS. Responda em Português, curto (max 2 frases), sarcástico e prestativo."}]
+        }
+    }
+
+    try:
+        response = requests.post(URL_API, headers=headers, data=json.dumps(payload))
+        
+        if response.status_code == 200:
+            dados = response.json()
+            # Navega no JSON de resposta para pegar o texto
+            try:
+                texto_retorno = dados["candidates"][0]["content"]["parts"][0]["text"]
+                return texto_retorno
+            except KeyError:
+                return "Senhor, recebi uma resposta vazia dos servidores."
+        else:
+            print(f"Erro HTTP: {response.status_code} - {response.text}")
+            return "Desculpe, falha nos protocolos de comunicação."
+            
+    except Exception as e:
+        print(f"Erro de conexão: {e}")
+        return "Estou sem internet, senhor."
+
 def ouvir_microfone():
     recognizer = sr.Recognizer()
     with sr.Microphone() as source:
-        # 1. Ajuste de ruído mais curto para ser mais ágil
+        # Calibragem inicial
         recognizer.adjust_for_ambient_noise(source, duration=0.5)
         
-        # --- CONFIGURAÇÃO ANTI-CORTES ---
-        # pause_threshold: Tempo de silêncio necessário para ele achar que você acabou.
-        # Aumentei para 2.0 segundos (antes era 0.8). Dá tempo de respirar.
-        recognizer.pause_threshold = 2.0 
+        # --- AJUSTES FINOS ANTI-CORTE ---
+        recognizer.pause_threshold = 2.0  # Espera 2s de silêncio para considerar FIM
+        recognizer.energy_threshold = 300 # Sensibilidade (aumente se tiver muito ruído de fundo)
+        recognizer.dynamic_energy_threshold = True # Ajusta sozinho conforme o barulho da sala
         
-        # phrase_time_limit: Tirei o limite. Ele vai te ouvir até você ficar quieto por 2s.
-        
-        print("\n(Ouvindo...)")
+        print("\n(Ouvindo... Fale com calma)")
         try:
-            # timeout=None significa que ele vai esperar para sempre você começar a falar
+            # timeout=None: Espera indefinidamente você começar a falar
             audio = recognizer.listen(source, timeout=None)
             print("(Processando...)")
             
@@ -60,34 +90,22 @@ def ouvir_microfone():
         except sr.UnknownValueError:
             return None
         except Exception as e:
-            # Ignora erros de timeout silenciosos
             return None
 
 def main():
-    falar("Módulo de comunicação atualizado. Estou ouvindo.")
+    falar("Modo HTTP ativado. Conexão direta estabelecida. Estou pronto.")
     
     while True:
         comando = ouvir_microfone()
         
         if comando:
             if "desligar" in comando.lower() or "tchau" in comando.lower():
-                falar("Sistemas offline.")
+                falar("Desligando sistemas.")
                 break
             
-            try:
-                # NOVA SINTAXE DE GERAÇÃO (Google GenAI SDK)
-                # Usando o modelo 1.5 Flash que é rápido e estável na nova lib
-                response = client.models.generate_content(
-                    model="gemini-1.5-flash", 
-                    contents=comando,
-                    config={
-                        "system_instruction": "Você é o JARVIS. Responda em Português, de forma curta (máximo 2 frases), técnica e prestativa."
-                    }
-                )
-                falar(response.text)
-            except Exception as e:
-                falar("Senhor, ocorreu um erro na matriz.")
-                print(f"ERRO API: {e}")
+            # Chama a função HTTP manual
+            resposta = enviar_para_gemini_http(comando)
+            falar(resposta)
 
 if __name__ == "__main__":
     main()
